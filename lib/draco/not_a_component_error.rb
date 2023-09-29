@@ -1,3 +1,1 @@
-module Draco
-  class NotAComponentError < StandardError; end
-end
+class Draco::NotAComponentError < StandardError; end

@@ -1,292 +1,172 @@
  # Public: The container for current Entities and Systems.
-module Draco
-  class World
-    @default_entities = []
-    @default_systems = []
+class Draco::World
+  @default_entities = []
+  @default_systems = []
 
-    # Internal: Resets the default components for each class that inherites Entity.
-    #
-    # sub - The class that is inheriting Entity.
-    #
-    # Returns nothing.
-    def self.inherited(sub)
-      super
-      sub.instance_variable_set(:@default_entities, [])
-      sub.instance_variable_set(:@default_systems, [])
+  # Internal: Resets the default components for each class that inherites Entity.
+  #
+  # sub - The class that is inheriting Entity.
+  #
+  # Returns nothing.
+  def self.inherited(sub)
+    super
+    sub.instance_variable_set(:@default_entities, [])
+    sub.instance_variable_set(:@default_systems, [])
+  end
+
+  # Public: Adds a default Entity to the World.
+  #
+  # entity - The class of the Entity to add by default.
+  # defaults - The Hash of default values for the Entity. (default: {})
+  #
+  # Examples
+  #
+  #   entity(Player)
+  #
+  #   entity(Player, position: { x: 0, y: 0 })
+  #
+  # Returns nothing.
+  def self.entity(entity, defaults = {})
+    name = defaults[:as]
+    @default_entities.push([entity, defaults])
+
+    attr_reader(name.to_sym) if name
+  end
+
+  # Public: Adds default Systems to the World.
+  #
+  # systems - The System or Array list of System classes to add to the World.
+  #
+  # Examples
+  #
+  #   systems(RenderSprites)
+  #
+  #   systems(RenderSprites, RenderLabels)
+  #
+  # Returns nothing.
+  def self.systems(*systems)
+    @default_systems += Array(systems).flatten
+  end
+
+  class << self
+    # Internal: Returns the default Entities for the class.
+    attr_reader :default_entities
+
+    # Internal: Returns the default Systems for the class.
+    attr_reader :default_systems
+  end
+
+  # Public: Returns the Array of Systems.
+  attr_reader :systems
+
+  # Public: Returns the Array of Entities.
+  attr_reader :entities
+
+  # Public: Initializes a World.
+  #
+  # entities - The Array of Entities for the World (default: []).
+  # systems - The Array of System Classes for the World (default: []).
+  def initialize(entities: [], systems: [])
+    default_entities = self.class.default_entities.map do |default|
+      klass, attributes = default
+      name = attributes[:as]
+      entity = klass.new(attributes)
+      instance_variable_set("@#{name}", entity) if name
+
+      entity
     end
 
-    # Public: Adds a default Entity to the World.
-    #
-    # entity - The class of the Entity to add by default.
-    # defaults - The Hash of default values for the Entity. (default: {})
-    #
-    # Examples
-    #
-    #   entity(Player)
-    #
-    #   entity(Player, position: { x: 0, y: 0 })
-    #
-    # Returns nothing.
-    def self.entity(entity, defaults = {})
-      name = defaults[:as]
-      @default_entities.push([entity, defaults])
+    @entities = EntityStore.new(self, default_entities + entities)
+    @systems = self.class.default_systems + systems
+    after_initialize
+  end
 
-      attr_reader(name.to_sym) if name
+  # Public: Callback run after the world is initialized.
+  #
+  # This is empty by default but is present to allow plugins to tie into.
+  #
+  # Returns nothing.
+  def after_initialize; end
+
+  # Public: Callback run before #tick is called.
+  #
+  # context - The context object of the current tick from the game engine. In DragonRuby this is `args`.
+  #
+  # Returns the systems to run during this tick.
+  def before_tick(_context)
+    systems.map do |system|
+      entities = filter(system.filter)
+
+      system.new(entities: entities, world: self)
+    end
+  end
+
+  # Public: Runs all of the Systems every tick.
+  #
+  # context - The context object of the current tick from the game engine. In DragonRuby this is `args`.
+  #
+  # Returns nothing
+  def tick(context)
+    results = before_tick(context).map do |system|
+      system.call(context)
     end
 
-    # Public: Adds default Systems to the World.
-    #
-    # systems - The System or Array list of System classes to add to the World.
-    #
-    # Examples
-    #
-    #   systems(RenderSprites)
-    #
-    #   systems(RenderSprites, RenderLabels)
-    #
-    # Returns nothing.
-    def self.systems(*systems)
-      @default_systems += Array(systems).flatten
-    end
+    after_tick(context, results)
+  end
 
-    class << self
-      # Internal: Returns the default Entities for the class.
-      attr_reader :default_entities
+  # Public: Callback run after #tick is called.
+  #
+  # This is empty by default but is present to allow plugins to tie into.
+  #
+  # context - The context object of the current tick from the game engine. In DragonRuby this is `args`.
+  # results - The System instances that were run.
+  #
+  # Returns nothing.
+  def after_tick(context, results); end
 
-      # Internal: Returns the default Systems for the class.
-      attr_reader :default_systems
-    end
+  # Public: Callback to run when a component is added to an existing Entity.
+  #
+  # entity - The Entity the Component was added to.
+  # component - The Component that was added to the Entity.
+  #
+  # Returns nothing.
+  def component_added(entity, component); end
 
-    # Public: Returns the Array of Systems.
-    attr_reader :systems
+  # Public: Callback to run when a component is added to an existing Entity.
+  #
+  # entity - The Entity the Component was removed from.
+  # component - The Component that was removed from the Entity.
+  #
+  # Returns nothing.
+  def component_removed(entity, component); end
 
-    # Public: Returns the Array of Entities.
-    attr_reader :entities
+  # Public: Finds all Entities that contain all of the given Components.
+  #
+  # components - An Array of Component classes to match.
+  #
+  # Returns an Array of matching Entities.
+  def filter(*components)
+    entities[components.flatten]
+  end
 
-    # Public: Initializes a World.
-    #
-    # entities - The Array of Entities for the World (default: []).
-    # systems - The Array of System Classes for the World (default: []).
-    def initialize(entities: [], systems: [])
-      default_entities = self.class.default_entities.map do |default|
-        klass, attributes = default
-        name = attributes[:as]
-        entity = klass.new(attributes)
-        instance_variable_set("@#{name}", entity) if name
+  # Public: Serializes the World to save the current state.
+  #
+  # Returns a Hash representing the World.
+  def serialize
+    {
+      class: self.class.name.to_s,
+      entities: @entities.map(&:serialize),
+      systems: @systems.map { |system| system.name.to_s }
+    }
+  end
 
-        entity
-      end
+  # Public: Returns a String representation of the World.
+  def inspect
+    serialize.to_s
+  end
 
-      @entities = EntityStore.new(self, default_entities + entities)
-      @systems = self.class.default_systems + systems
-      after_initialize
-    end
-
-    # Public: Callback run after the world is initialized.
-    #
-    # This is empty by default but is present to allow plugins to tie into.
-    #
-    # Returns nothing.
-    def after_initialize; end
-
-    # Public: Callback run before #tick is called.
-    #
-    # context - The context object of the current tick from the game engine. In DragonRuby this is `args`.
-    #
-    # Returns the systems to run during this tick.
-    def before_tick(_context)
-      systems.map do |system|
-        entities = filter(system.filter)
-
-        system.new(entities: entities, world: self)
-      end
-    end
-
-    # Public: Runs all of the Systems every tick.
-    #
-    # context - The context object of the current tick from the game engine. In DragonRuby this is `args`.
-    #
-    # Returns nothing
-    def tick(context)
-      results = before_tick(context).map do |system|
-        system.call(context)
-      end
-
-      after_tick(context, results)
-    end
-
-    # Public: Callback run after #tick is called.
-    #
-    # This is empty by default but is present to allow plugins to tie into.
-    #
-    # context - The context object of the current tick from the game engine. In DragonRuby this is `args`.
-    # results - The System instances that were run.
-    #
-    # Returns nothing.
-    def after_tick(context, results); end
-
-    # Public: Callback to run when a component is added to an existing Entity.
-    #
-    # entity - The Entity the Component was added to.
-    # component - The Component that was added to the Entity.
-    #
-    # Returns nothing.
-    def component_added(entity, component); end
-
-    # Public: Callback to run when a component is added to an existing Entity.
-    #
-    # entity - The Entity the Component was removed from.
-    # component - The Component that was removed from the Entity.
-    #
-    # Returns nothing.
-    def component_removed(entity, component); end
-
-    # Public: Finds all Entities that contain all of the given Components.
-    #
-    # components - An Array of Component classes to match.
-    #
-    # Returns an Array of matching Entities.
-    def filter(*components)
-      entities[components.flatten]
-    end
-
-    # Public: Serializes the World to save the current state.
-    #
-    # Returns a Hash representing the World.
-    def serialize
-      {
-        class: self.class.name.to_s,
-        entities: @entities.map(&:serialize),
-        systems: @systems.map { |system| system.name.to_s }
-      }
-    end
-
-    # Public: Returns a String representation of the World.
-    def inspect
-      serialize.to_s
-    end
-
-    # Public: Returns a String representation of the World.
-    def to_s
-      serialize.to_s
-    end
-
-    # Internal: Stores Entities with better performance than Array.
-    class EntityStore
-      include Enumerable
-
-      attr_reader :parent
-
-      # Internal: Initializes a new EntityStore
-      #
-      # entities - The Entities to add to the EntityStore
-      def initialize(parent, *entities)
-        @parent = parent
-        @entity_to_components = Hash.new { |hash, key| hash[key] = Set.new }
-        @component_to_entities = Hash.new { |hash, key| hash[key] = Set.new }
-        @entity_ids = {}
-
-        self << entities
-      end
-
-      # Internal: Gets all Entities that implement all of the given Components or that match the given entity ids.
-      #
-      # components_or_ids - The Component Classes to filter by
-      #
-      # Returns a Set list of Entities
-      def [](*components_or_ids)
-        components_or_ids
-          .flatten
-          .map { |component_or_id| select_entities(component_or_id) }
-          .reduce { |acc, i| i & acc }
-      end
-
-      # Internal: Gets entities by component or id.
-      #
-      # component_or_id - The Component Class or entity id to select.
-      #
-      # Returns an Array of Entities.
-      def select_entities(component_or_id)
-        if component_or_id.is_a?(Numeric)
-          Array(@entity_ids[component_or_id])
-        else
-          @component_to_entities[component_or_id]
-        end
-      end
-
-      # Internal: Adds Entities to the EntityStore
-      #
-      # entities - The Entity or Array list of Entities to add to the EntityStore.
-      #
-      # Returns the EntityStore
-      def <<(entities)
-        Array(entities).flatten.each { |e| add(e) }
-        self
-      end
-
-      # Internal: Adds an Entity to the EntityStore.
-      #
-      # entity - The Entity to add to the EntityStore.
-      #
-      # Returns the EntityStore
-      def add(entity)
-        entity.subscribe(self)
-
-        @entity_ids[entity.id] = entity
-        components = entity.components.map(&:class)
-        @entity_to_components[entity].merge(components)
-
-        components.each { |component| @component_to_entities[component].add(entity) }
-        entity.components.each { |component| @parent.component_added(entity, component) }
-
-        self
-      end
-
-      # Internal: Removes an Entity from the EntityStore.
-      #
-      # entity - The Entity to remove from the EntityStore.
-      #
-      # Returns the EntityStore
-      def delete(entity)
-        @entity_ids.delete(entity.id)
-        components = Array(@entity_to_components.delete(entity))
-
-        components.each do |component|
-          @component_to_entities[component].delete(entity)
-        end
-      end
-
-      # Internal: Returns true if the EntityStore has no Entities.
-      def empty?
-        @entity_to_components.empty?
-      end
-
-      # Internal: Returns an Enumerator for all of the Entities.
-      def each(&block)
-        @entity_to_components.keys.each(&block)
-      end
-
-      # Internal: Updates the EntityStore when an Entity's Components are added.
-      #
-      # entity - The Entity the Component was added to.
-      # component - The Component that was added to the Entity.
-      #
-      # Returns nothing.
-      def component_added(entity, component)
-        @component_to_entities[component.class].add(entity)
-        @parent.component_added(entity, component)
-      end
-
-      # Internal: Updates the EntityStore when an Entity's Components are removed.
-      #
-      # entity - The Entity the Component was removed from.
-      # component - The Component that was removed from the Entity.
-      #
-      # Returns nothing.
-      def component_removed(entity, component)
-        @component_to_entities[component.class].delete(entity)
-        @parent.component_removed(entity, component)
-      end
-    end
+  # Public: Returns a String representation of the World.
+  def to_s
+    serialize.to_s
   end
 end
