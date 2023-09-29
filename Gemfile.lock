@@ -43,15 +43,17 @@ GEM
     simplecov-html (0.12.3)
     simplecov_json_formatter (0.1.2)
     unicode-display_width (1.7.0)
+    zeitwerk (2.6.12)
 
 PLATFORMS
   ruby
 
 DEPENDENCIES
-  rake (~> 12.0)
-  rspec (~> 3.0)
+  rake
+  rspec
   rubocop
   simplecov
+  zeitwerk
 
 BUNDLED WITH
    2.2.3
