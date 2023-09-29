@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "lib/draco"
-
 Gem::Specification.new do |spec|
   spec.name          = "draco"
   spec.version       = Draco::VERSION
